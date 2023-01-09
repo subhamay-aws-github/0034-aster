@@ -1,0 +1,325 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+   CFN Template to create a EC2 instance to be used as a data produer for the Kinesis. 
+
+Metadata:
+  TemplateName: ec2-instance-stack.yaml
+  TemplateType: EC2 Instance
+  Version: 1.0.0
+  Owner: Subhamay Bhattacharyya
+  ProjectName: Aster
+  Modification History: 
+    - 1.0.0  - January 04, 2023   -- Initial Version 
+  Resources: 
+    - EC2 instance with Kinesis Agent installed
+  StepsToTest: |
+    Manualy verify the Stack.
+  StepsToCleanup: |
+    Stack delete command
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    #################################### Project Name and Environment ##############################
+    - Label: 
+        default: "Project And Environment:"
+      Parameters: 
+      - ProjectName
+      - Environment
+    #################################### KMS Key ###################################################
+    - Label: 
+        default: "KMS Configuration:"
+      Parameters: 
+      - KmsMasterKeyIdRegion1
+    #################################### Kinesis Data Stream #######################################
+    - Label: 
+        default: "Kinesis Data Stream Configuration:"
+      Parameters: 
+        - KinesisDataStreamName
+    #################################### EC2 #######################################################
+    - Label: 
+        default: "EC2 Instance(Data Producer) Configuration:"
+      Parameters: 
+        - EC2ImageId
+        - VpcId
+        - SubnetId
+    ParameterLabels:
+      ################################## Project Name and Environment ##############################
+      ProjectName:
+        default: Project Name.
+      Environment:
+        default: Environment Name.
+      ################################## KMS Key ###################################################
+      KmsMasterKeyIdRegion1:
+        default: KMS Key Id in Region-1.
+      ################################## Kinesis Data Stream #######################################
+      KinesisDataStreamName:
+        default: Kinesis Data Stream Name.
+      ################################## EC2 #######################################################
+      EC2ImageId:
+        default: EC2 Image Id.
+      VpcId: 
+        default: The VPC where the EC2 Security Group will be created.
+      SubnetId:
+        default: The Subnet where the EC2 instance will be created.
+Parameters:
+  ###################################### Project And Environment Name ##############################
+  ProjectName:
+    Default: project
+    Description: The Name Of The Project.
+    Type: String
+    MinLength: 5
+    MaxLength: 30
+    AllowedPattern: "[a-z]*"
+    ConstraintDescription: The length should be between 5 and 30, must contain only lowercase alphabets.
+  Environment:
+    Default: devl
+    Description: The Name Of The Environment.
+    Type: String
+    AllowedValues: [devl, test, prod]
+    ConstraintDescription: The Environment must be devl / test or prod
+  ###################################### KMS Key ###################################################
+  KmsMasterKeyIdRegion1: 
+    Type: String
+    Description: KMS Key Id In Region-1.
+    Default: e4c733c5-9fbe-4a90-bda1-6f0362bc9b89
+    MinLength: 36
+    MaxLength: 36
+    AllowedPattern: "[a-z0-9-]*"
+    ConstraintDescription: The length of the KMS Key Id should be 36 and must be lowercase alphabets, numbers and dash.
+  ###################################### Kinesis Data Stream #######################################
+  KinesisDataStreamName:
+    Default: kinesis-datastream
+    Description: The Name Of The Kinesis Datastream.
+    Type: String
+    MinLength: 10
+    MaxLength: 40
+    AllowedPattern: "[a-zA-Z-]*"
+    ConstraintDescription: Must be between 10 and 40 characters long and begin with a letter and can contain number or hyphen (-).
+  ###################################### EC2 #######################################################
+  EC2ImageId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+  VpcId:  
+    Type: AWS::EC2::VPC::Id
+    Description: The VPC Where The EC2 Instance Will Be Launched.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: The Subnet Where The EC2 Instance Will Be Launched.
+
+Resources:
+  ###################################### EC2 Instance Role #########################################
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aster-ec2-instance-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Principal:
+              Service: ec2.amazonaws.com
+            Effect: Allow
+            Sid: ''
+      Policies:
+        - PolicyName: aster-ec2-instance-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                - 'kinesis:PutRecords'
+                Resource: !Sub 'arn:${AWS::Partition}:kinesis:${AWS::Region}:${AWS::AccountId}:stream/${KinesisDataStreamName}-${Environment}-${AWS::Region}'
+                Effect: Allow
+                Sid: AllowAccessToKinesis
+              - Action: 
+                - 's3:GetObject'
+                Resource: 'arn:aws:s3:::subhamay-project-repo-us-east-1/0034-aster/code/log-generator/*'
+                Effect: Allow
+                Sid: AllowReadFromS3Bucket
+              - Action: 
+                - kms:Decrypt
+                - kms:GenerateDataKey
+                - kms:GenerateDataKeyPair
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsMasterKeyIdRegion1}'
+                Effect: Allow
+                Sid: AllowKMSDecryption
+              - Action: 
+                - 'cloudwatch:PutMetricData'
+                Resource: '*'
+                Effect: Allow
+                Sid: AllowPutMetricDataToCloudWatch
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+  ###################################### EC2 Instance Profile ######################################
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName:  aster-ec2-instance-profile
+      Path: /
+      Roles:
+        - !Ref EC2InstanceRole
+  ###################################### EC2 Security Group ########################################
+  SSHSecurityGroup:
+    # http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-security-group.html
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: aster-ec2-ssh-sg
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+      - CidrIp: 0.0.0.0/0
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+  ###################################### EC2 Instance ##############################################
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Metadata:
+      Comment: Install a Kinesis Agent
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              aws-kinesis-agent: []
+          groups:
+            astergroup: {}
+          users:
+            asteruser:
+              groups:
+                - astergroup
+          files:
+            /home/ec2-user/LogGenerator.py:
+              source: https://subhamay-project-repo-us-east-1.s3.amazonaws.com/0034-aster/code/log-generator/LogGenerator.py
+              mode: '000755'
+              owner: asteruser
+              group: astergroup
+              authentication: S3AccessCreds
+            /home/ec2-user/OnlineRetail.csv:
+              source: https://subhamay-project-repo-us-east-1.s3.amazonaws.com/0034-aster/code/log-generator/OnlineRetail.csv
+              mode: '000755'
+              owner: asteruser
+              group: astergroup
+              authentication: S3AccessCreds
+            /etc/aws-kinesis/agent.json:
+              content: !Sub |
+                {
+                "cloudwatch.emitMetics": true,
+                "kinesis.endpoint": "",
+                "firehose.endpoint": "",
+
+                "flows": [
+                    {
+                      "filePattern": "/var/log/aster/*.log",
+                      "kinesisStream": "${KinesisDataStreamName}-${Environment}-${AWS::Region}",
+                      "partitionKeyOption": "RANDOM",
+                      "dataProcessingOptions": [
+                        {
+                            "optionName": "CSVTOJSON",
+                            "customFieldNames": ["InvoiceNo", "StockCode", "Description", "Quantity", "InvoiceDate", "UnitPrice", "Customer", "Country"]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              mode: '000644'
+              owner: asteruser
+              group: astergroup
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+              mode: 000400
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.EC2Instance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
+              mode: 000400
+              owner: root
+              group: root
+          commands:
+            01_create_aster_dir:
+              command: 'sudo mkdir /var/log/aster'
+            02_change_aster_dir_owner:
+              command: 'chown asteruser /var/log/aster'
+            03_change_aster_dir_group:
+              command: 'chgrp astergroup /var/log/aster'
+            04_change_log_generator_permission:
+              command: 'chmod a+x /home/ec2-user/LogGenerator.py'
+          services:
+            sysvinit:
+              aws-kinesis-agent:
+                enabled: 'true'
+                ensureRunning: 'true'
+              cfn-hup:
+                enable: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+      AWS::CloudFormation::Authentication:
+        # Define S3 access credentials
+        S3AccessCreds:
+          type: S3
+          buckets:
+            - subhamay-project-repo-us-east-1
+          roleName: !Ref EC2InstanceRole
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT7M
+
+    Properties:
+      InstanceType: t2.micro
+      ImageId: !Ref EC2ImageId
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroupIds:
+        - !Ref SSHSecurityGroup
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            
+            # Get the latest CloudFormation helper scripts
+            yum install -y aws-cfn-bootstrap
+            
+            # Start cfn-init
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
+            
+            # cfn-init completed so signal success or not
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-kinesis-agent'
+        - Key: ProjectName
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  EC2InstanceId:
+    Description: The EC2 Instance Id.
+    Value: !Ref EC2Instance
+  EC2SubnetId:
+    Description: The EC2 instance availability zone
+    Value: !GetAtt EC2Instance.AvailabilityZone
+  EC2PublicIP:
+    Description: The EC2 instance Public IP
+    Value: !GetAtt EC2Instance.PublicIp
+  EC2InstanceProfileArn:
+    Description: The EC2 instance profile Arn
+    Value: !GetAtt EC2InstanceProfile.Arn
+  SecurityGroupId: 
+    Description: The Security Group Id
+    Value: !Ref SSHSecurityGroup

@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+   CFN Template to create a DynamoDB table. 
+
+Metadata:
+  TemplateName: dynamodb-stack.yaml
+  TemplateType: DynamoDB table
+  Version: 1.0.0
+  Owner: Subhamay Bhattacharyya
+  ProjectName: Aster
+  Modification History: 
+    - 1.0.0  - December 28, 2022   -- Initial Version 
+  Resources: 
+    - DynamoDB table
+  StepsToTest: |
+    Manualy verify the Stack.
+  StepsToCleanup: |
+    Stack delete command
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    #################################### Project Name and Environment ##############################
+    - Label: 
+        default: "Project And Environment:"
+      Parameters: 
+      - ProjectName
+      - Environment
+    #################################### KMS Key ###################################################
+    - Label: 
+        default: "KMS Configuration:"
+      Parameters: 
+      - KmsMasterKeyAlias
+    #################################### DynamoDB ##################################################
+    - Label: 
+        default: DynamoDB Configuration
+      Parameters: 
+      - DynamoDBTableName
+      - DynamoDBTablePartitionKey
+      - DynamoDBTableSortKey
+      - DynamoDBTablePartitionKeyAttributeType
+      - DynamoDBTableSortKeyAttributeType
+      - DynamoDBGlobalTableRegion2
+      - DynamoDBGlobalTableRegion3
+    ParameterLabels:
+      ################################## Project Name and Environment ##############################
+      ProjectName:
+        default: Project Name.
+      Environment:
+        default: Environment Name.
+      ################################## KMS Key ###################################################
+      KmsMasterKeyAlias:
+        default: The KMS Master Key Alias.
+      ################################## DynamoDB ##################################################
+      DynamoDBTableName: 
+        default: DynamoDB Table Name.
+      DynamoDBTablePartitionKey:
+        default: DynamoDB Table Partition Key.
+      DynamoDBTableSortKey:
+        default: DynamoDB Table Sort Key.
+      DynamoDBTablePartitionKeyAttributeType: 
+        default: DynamoDB Partition Key Datatype.
+      DynamoDBTableSortKeyAttributeType: 
+        default: DynamoDB Sort Key Datatype.
+      DynamoDBGlobalTableRegion2: 
+        default: DynamoDB Global Table Second Region.
+      DynamoDBGlobalTableRegion3: 
+        default: DynamoDB Global Table Third Region.
+Parameters:
+  ###################################### Project And Environment Name ##############################
+  ProjectName:
+    Default: project
+    Description: The Name Of The Project.
+    Type: String
+    MinLength: 5
+    MaxLength: 30
+    AllowedPattern: "[a-z]*"
+    ConstraintDescription: The length should be between 5 and 30, must contain only lowercase alphabets.
+  Environment:
+    Default: devl
+    Description: The Name Of The Environment.
+    Type: String
+    AllowedValues: [devl, test, prod]
+    ConstraintDescription: The Environment must be devl / test or prod
+  ###################################### KMS Key ###################################################
+  KmsMasterKeyAlias: 
+    Default: SB-KMS
+    Description: The KMS Key to be used in the encryption.
+    Type: String
+    MinLength: 5
+    MaxLength: 20
+    AllowedPattern: "[a-zA-Z0-9-]*"
+    ConstraintDescription: The length of the KMS Key Alias should be beteen 5 and 20 and can only contain lowercase alphanumeric characters and dash.
+  ###################################### DynamoDB ##################################################
+  DynamoDBTableName:
+    Default: some-dynamodb-table
+    Description: The Name Of The DynamoDB Table.
+    Type: String
+    MinLength: 10
+    MaxLength: 40
+    AllowedPattern: "[a-z][a-z0-9-]*"
+    ConstraintDescription: DynamoDB table name must be between 10 and 40 characters and must contain only lowercase letters, numbers and dash(-) and must start with a letter.
+  DynamoDBTablePartitionKey:
+    Default: partitionKey
+    Description: The Name Of The DynamoDB Partition Key.
+    Type: String
+    MinLength: 5
+    MaxLength: 30
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9-]*"
+    ConstraintDescription: Must begin with a letter and contain only alphanumeric characters.
+  DynamoDBTableSortKey:
+    Default: sortKey
+    Description: The Name Of The DynamoDB Sort Key (type skip if creating the table without Sort Key).
+    Type: String
+    MinLength: 5
+    MaxLength: 30
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9-]*"
+    ConstraintDescription: Must begin with a letter and contain only alphanumeric characters.
+  DynamoDBTablePartitionKeyAttributeType:
+    Default: N
+    Description: The Datatype Of The DynamoDB Partition Key.
+    Type: String
+    AllowedValues: [N, S, B]
+    ConstraintDescription: The datatype should be either N (Number), S (String) or B (Binary)
+  DynamoDBTableSortKeyAttributeType:
+    Default: N
+    Description: The Datatype Of The DynamoDB Sort Key.
+    Type: String
+    AllowedValues: [N, S, B]
+    ConstraintDescription: The datatype should be either N (Number), S (String) or B (Binary)
+  DynamoDBGlobalTableRegion2:
+    Type: String
+    Description: The Second Region Where DynamoDB Global Table Will Be Created.
+    Default: us-east-2
+    AllowedValues:
+      - us-east-2
+  DynamoDBGlobalTableRegion3:
+    Type: String
+    Description: The Third Region Where DynamoDB Global Table Will Be Created.
+    Default: us-west-2
+    AllowedValues:
+      - us-west-2
+Resources:
+  ###################################### DynamoDB Global Table #####################################
+  DynamoDBGlobalTable:
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Type: 'AWS::DynamoDB::GlobalTable'
+    Properties:
+      TableName: !Sub '${DynamoDBTableName}-${Environment}'
+      AttributeDefinitions:
+      - AttributeName: !Ref DynamoDBTablePartitionKey
+        AttributeType: !Ref DynamoDBTablePartitionKeyAttributeType
+      - AttributeName: !Ref DynamoDBTableSortKey
+        AttributeType: !Ref DynamoDBTableSortKeyAttributeType
+      KeySchema:
+      - AttributeName: !Ref DynamoDBTablePartitionKey
+        KeyType: HASH
+      - AttributeName: !Ref DynamoDBTableSortKey
+        KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+      Replicas:
+      - Region: !Sub '${AWS::Region}'
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          KMSMasterKeyId: !Sub 'alias/${KmsMasterKeyAlias}'
+        Tags:
+        - Key:  ProjectName
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+      - Region: !Ref DynamoDBGlobalTableRegion2
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          KMSMasterKeyId:  !Sub 'alias/${KmsMasterKeyAlias}'
+        Tags:
+        - Key:  ProjectName
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+      - Region: !Ref DynamoDBGlobalTableRegion3
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          KMSMasterKeyId:  !Sub 'alias/${KmsMasterKeyAlias}'
+        Tags:
+        - Key:  ProjectName
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+Outputs:
+  DynamoDBTableArn: 
+    Description: The Arn of the DynamoDB Table
+    Value: !GetAtt DynamoDBGlobalTable.Arn
+  DynamoDBStreamArn: 
+    Description: The Arn of the DynamoDB Stream
+    Value: !GetAtt DynamoDBGlobalTable.StreamArn
+  DynamoDBTableId: 
+    Description: The Id of the DynamoDB table
+    Value: !GetAtt DynamoDBGlobalTable.TableId
